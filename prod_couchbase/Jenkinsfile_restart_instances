@@ -1,0 +1,53 @@
+#!groovy
+
+// pipeline config
+def javaAgent = 'build && java'
+
+// project config
+def commit
+def branch
+def repo
+
+@Library(['global-jenkins-library@master','product-copy-jenkins-config@develop']) _
+
+// pipeline
+node(javaAgent) {
+
+    properties([
+            [$class: 'BuildDiscarderProperty', strategy: [$class: 'LogRotator',daysToKeepStr: '1', numToKeepStr: '4']],
+            parameters([
+                    choice(
+                            choices: ["test", "production"].join("\n"),
+                            defaultValue: 'test',
+                            description: 'Environment you want to restart',
+                            name: 'envToRestart'
+                    )
+            ])
+    ])
+
+    try {
+        stage('Collect info') {
+            checkout scm
+            branch = env.BRANCH_NAME
+            commit = gitUtils.getCommitId()
+            repo = gitUtils.getOriginUrl()
+        }
+
+        stage('Restart Couchbase-Cluster'){
+            if (params.envToRestart == 'test'){
+                pcCouchbase.restartCouchbaseInstance environment:params.envToRestart, type:'master', deployToMachine: 'dev1'
+                pcCouchbase.restartCouchbaseInstance environment:params.envToRestart, type:'slave', deployToMachine: 'dev2'
+                pcCouchbase.restartCouchbaseInstance environment:params.envToRestart, type:'slave', deployToMachine: 'dev3'
+            }
+
+            if (params.envToRestart == 'production'){
+                pcCouchbase.restartCouchbaseInstance environment:params.envToRestart, type:'master', deployToMachine: 'prod1'
+                pcCouchbase.restartCouchbaseInstance environment:params.envToRestart, type:'slave', deployToMachine: 'prod2'
+                pcCouchbase.restartCouchbaseInstance environment:params.envToRestart, type:'slave', deployToMachine: 'prod3'
+            }
+        }
+
+    } catch (def e) {
+        currentBuild.result = 'FAILURE'
+    }
+}

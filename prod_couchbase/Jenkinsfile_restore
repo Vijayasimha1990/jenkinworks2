@@ -1,0 +1,57 @@
+#!groovy
+
+// pipeline config
+def javaAgent = 'build && java'
+
+// project config
+def commit
+def branch
+def repo
+def uname
+def pword
+
+@Library(['global-jenkins-library@master','product-copy-jenkins-config@develop']) _
+
+// pipeline
+node(javaAgent) {
+
+    properties([
+            [$class: 'BuildDiscarderProperty', strategy: [$class: 'LogRotator',daysToKeepStr: '1', numToKeepStr: '4']],
+            parameters([
+                    choice(
+                            choices: ["test", "production"].join("\n"),
+                            defaultValue: 'test',
+                            description: 'Couchbase Restore',
+                            name: 'couchbaseRestore'
+                    )
+            ])
+    ])
+	try {
+        stage('Collect info') {
+            checkout scm
+            branch = env.BRANCH_NAME
+            commit = git.getCommitId()
+            repo = git.getOriginUrl()
+        }
+		stage('restore'){
+        //we wait two minutes to make sure that the service is up and running
+        sleep 120
+			//Fetching credentials for respective environment
+			withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'couchbase',
+                usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD']]) {
+					uname = env.USERNAME
+					pword = env.PASSWORD
+			}
+			if (params.couchbaseRestore == 'test'){
+				pcCouchbase.restore environment:params.couchbaseRestore, deployToMachine: deployMaster,username : uname, password :pword,bucketname:'dev'
+				pcCouchbase.restore environment:params.couchbaseRestore, deployToMachine: deployMaster,username : uname, password :pword,bucketname:'sit'
+				pcCouchbase.restore environment:params.couchbaseRestore, deployToMachine: deployMaster,username : uname, password :pword,bucketname:'staging'
+			}
+			if (params.couchbaseRestore == 'production'){
+				pcCouchbase.restore environment:params.couchbaseRestore, deployToMachine: deployMaster,username : uname, password :pword,bucketname:'prod'
+			}
+		}	
+    } catch (def e) {
+        currentBuild.result = 'FAILURE'
+    }
+}

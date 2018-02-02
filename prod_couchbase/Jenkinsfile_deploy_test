@@ -1,0 +1,87 @@
+#!groovy
+
+// pipeline config
+def javaAgent = 'build && java'
+def dockerAgent = 'build && docker'
+
+// project config
+def commit
+def branch
+def repo
+def environment = 'test'
+def deployMaster = 'dev1'
+def deploySlave = 'dev2'
+def deploySlave2 = 'dev3'
+
+@Library(['global-jenkins-library@master','product-copy-jenkins-config@develop']) _
+
+// pipeline
+node(javaAgent) {
+
+    properties([
+            [$class: 'BuildDiscarderProperty', strategy: [$class: 'LogRotator',daysToKeepStr: '1', numToKeepStr: '4']],
+            parameters([
+                    string(
+                            defaultValue: 'latest',
+                            description: 'Image that has to be deployed.',
+                            name: 'imageTag'
+                    )
+            ])
+    ])
+
+    stage('Collect info') {
+        checkout scm
+        branch = env.BRANCH_NAME
+        commit = gitUtils.getCommitId()
+        repo = gitUtils.getOriginUrl()
+    }
+
+    stage('Prepare environment') {
+        pcCouchbase.prepareCouchbaseEnvironment environment: environment, type: 'master', deployToMachine: deployMaster
+        pcCouchbase.prepareCouchbaseEnvironment environment: environment, type: 'slave', deployToMachine: deploySlave
+        pcCouchbase.prepareCouchbaseEnvironment environment: environment, type: 'slave', deployToMachine: deploySlave2
+    }
+
+    stage('Deploy Couchbase-Master'){
+        node(dockerAgent) {
+            pcCouchbase.deployCouchbaseInstance environment: environment,
+                    type: 'master',
+                    deployToMachine: deployMaster,
+                    imageToDeploy: params.imageTag
+        }
+    }
+
+    stage('Deploy Couchbase-Slaves'){
+        node(dockerAgent) {
+            //we wait two minutes to make sure master node is fully operational
+            sleep 120
+            pcCouchbase.deployCouchbaseInstance environment: environment,
+                    type: 'slave',
+                    deployToMachine: deploySlave,
+                    imageToDeploy: params.imageTag,
+                    masterHostMachine: deployMaster
+
+            pcCouchbase.deployCouchbaseInstance environment: environment,
+                    type: 'slave',
+                    deployToMachine: deploySlave2,
+                    imageToDeploy: params.imageTag,
+                    masterHostMachine: deployMaster
+        }
+    }
+
+
+
+    stage('Create buckets'){
+        //we wait two minutes to make sure that the service is up and running and create the buckets for the three environments that will
+        //be hosted in the test couchabes instance (develop, sit and staging)
+        sleep 120
+        pcCouchbase.createBuckets bucketsName: 'dev', environment: environment, deployToMachine: deployMaster
+        pcCouchbase.createBuckets bucketsName: 'sit', environment: environment, deployToMachine: deployMaster
+        pcCouchbase.createBuckets bucketsName: 'staging', environment: environment, deployToMachine: deployMaster
+    }
+	
+	stage('Set auto-failover'){
+        pcCouchbase.setAutoFailover environment: environment, deployToMachine: deployMaster
+    }
+
+}

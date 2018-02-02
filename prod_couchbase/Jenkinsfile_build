@@ -1,0 +1,57 @@
+#!groovy
+
+// pipeline config
+def javaAgent = 'build && java'
+def dockerAgent = 'build && docker'
+
+// project config
+def projectName = 'product-copy-couchbase'
+def commit
+def branch
+def repo
+
+// docker config
+def dockerCredentials = 'adidas-docker-registry'
+def dockerRepo = 'tools.adidas-group.com:5000'
+def imagePrefix = 'productcopy'
+
+
+@Library(['global-jenkins-library@master','product-copy-jenkins-config@develop']) _
+
+// pipeline
+node(javaAgent) {
+
+    properties([
+            [$class: 'BuildDiscarderProperty', strategy: [$class: 'LogRotator',daysToKeepStr: '1', numToKeepStr: '4']],
+            parameters([
+                    string(
+                            defaultValue: 'latest',
+                            description: 'Tab that will be used to push the image to the registry',
+                            name: 'imageTag'
+                    )
+            ])
+    ])
+
+    try {
+        stage('Collect info') {
+            checkout scm
+            branch = env.BRANCH_NAME
+            commit = gitUtils.getCommitId()
+            repo = gitUtils.getOriginUrl()
+            stash 'workspace'
+        }
+
+
+        stage('Dockerize') {
+            node(dockerAgent) {
+                unstash 'workspace'
+                dockerUtils.buildAndPush repo: dockerRepo,
+                        image: "${imagePrefix}/${projectName}:${params.imageTag}",
+                        credentials: dockerCredentials
+            }
+        }
+
+    } catch (def e) {
+        currentBuild.result = 'FAILURE'
+    }
+}
