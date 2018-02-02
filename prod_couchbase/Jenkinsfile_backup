@@ -10,7 +10,7 @@ def repo
 def uname
 def pword
 
-@Library(['global-jenkins-library@master','product-copy-jenkins-config@develop']) _
+@Library(['global-jenkins-library@master','jenkin_files@master']) _
 
 // pipeline
 node(javaAgent) {
